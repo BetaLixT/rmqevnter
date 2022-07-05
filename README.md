@@ -1,4 +1,4 @@
-# evnter
+# rmqevnter
 Package to fire and forget events
 
 ## Description
@@ -16,11 +16,11 @@ the NotificationDispatch
 ## Installation
 1. Install module
 ```bash
-go get github.com/BetaLixT/evnter
+go get github.com/BetaLixT/rmqevnter
 ```
 2. Import
 ```go
-import "github.com/BetaLixT/evnter"
+import "github.com/BetaLixT/rmqevnter"
 ```
 
 ## Usage

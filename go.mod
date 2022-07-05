@@ -1,4 +1,4 @@
-module github.com/BetaLixT/evnter
+module github.com/BetaLixT/rmqevnter
 
 go 1.18
 
