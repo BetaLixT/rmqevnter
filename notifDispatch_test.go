@@ -2,67 +2,90 @@ package streamNotif
 
 import (
 	"fmt"
-	"math/rand"
+	"log"
 	"testing"
 	"time"
 
+	"github.com/rabbitmq/amqp091-go"
 	"go.uber.org/zap"
 )
 
-type TestBatchPublisher struct {
-	Batches   int
-	Count     int
-	Completed bool
-	retr      chan TracedEvent
-	trch      chan int
-}
-
-func (b *TestBatchPublisher) Open(retr chan TracedEvent, trch chan int) error {
-	b.retr = retr
-	b.trch = trch
-	return nil
-}
-
-func (b *TestBatchPublisher) PublishBatch(evnts []TracedEvent) error {
-	for _, evnt := range evnts {
-		if rand.Intn(100) == 50 {
-			fmt.Printf("error lmao\n")
-			b.retr <- evnt
-			continue
-		}
-		b.trch <- -1
-		fmt.Printf("%d: %d %v\n", b.Batches, b.Count, evnt)
-		b.Count++
-	}
-	b.Batches++
-	return nil
-}
-
-func (b *TestBatchPublisher) Close() {
-	b.Completed = true
-}
-
-var _ IBatchPublisher = (*TestBatchPublisher)(nil)
-
 func TestNotificationDispatch(t *testing.T) {
-	lgr, err := zap.NewProduction()
+	conn, err := amqp091.Dial("amqp://guest:guest@localhost:5672/")
 	if err != nil {
-		fmt.Println("logger has failed me")
+		fmt.Printf("error while creating rabbitmq connection : %v", err)
 		t.FailNow()
 	}
-	dispatch := NewNotifDispatch()
-	batchPub := TestBatchPublisher{}
-	_ = NewPublishObserverAndSubscribe(
-		&batchPub,
-		dispatch,
-		lgr,
-		&PublishObserverOptions{
-			MaxPublishRetries: 100,
-		},
+	lch, err := conn.Channel()
+	if err != nil {
+		fmt.Printf("error while creating rabbitmq channel : %v", err)
+		t.FailNow()
+	}
+	lch.ExchangeDeclare(
+		"notifications",
+		"topic",
+		true,
+		false,
+		false,
+		false,
+		nil,
 	)
-	n := 2000
+	q, err := lch.QueueDeclare(
+		"",
+		false,
+		false,
+		true,
+		false,
+		nil,
+	)
+	err = lch.QueueBind(
+		q.Name,
+		"#",
+		"notifications",
+		false,
+		nil,
+	)
+	if err != nil {
+		fmt.Printf("error while creating rabbitmq queue: %v", err)
+		t.FailNow()
+	}
+	msgs, err := lch.Consume(
+		q.Name,
+		"",
+		true,
+		false,
+		false,
+		false,
+		nil,
+	)
+
+	lgr, err := zap.NewProduction()
+	if err != nil {
+		fmt.Printf("error while creating rabbitmq connection : %v", err)
+		t.FailNow()
+	}
+	recvCount := 0
+	go func() {
+		for range msgs {
+			log.Printf("recv: %d", recvCount)
+			recvCount++
+		}
+	}()
+
+	dis := NewNotifDispatch(
+		conn,
+		&RabbitMQBatchPublisherOptions{
+			ExchangeName: "notifications",
+			ExchangeType: "topic",
+			ServiceName:  "test",
+		},
+		lgr,
+	)
+
+	start := time.Now()
+	n := 10000
 	for i := 0; i < n; i++ {
-		dispatch.DispatchEventNotification(
+		dis.DispatchEventNotification(
 			"test",
 			"test",
 			"test",
@@ -73,18 +96,19 @@ func TestNotificationDispatch(t *testing.T) {
 			"test",
 			"test",
 		)
-		if i%5 == 0 {
-			time.Sleep(100 * time.Millisecond)
-		}
+		// if i%5 == 0 {
+		// 	time.Sleep(100 * time.Millisecond)
+		// }
 	}
 
-	dispatch.Close()
-	if batchPub.Count != n {
-		fmt.Printf("count miss match")
-		t.Fail()
+	dis.Close()
+	retr := 0
+	for recvCount != n && retr < 100 {
+		time.Sleep(500 * time.Millisecond)
 	}
-	if batchPub.Completed == false {
-		fmt.Printf("not completed")
-		t.Fail()
+	fmt.Printf("Completed in %f", time.Now().Sub(start).Seconds())
+	if recvCount != n {
+		fmt.Printf("only %d messages were recieved out of %d", recvCount, n)
+		t.FailNow()
 	}
 }
