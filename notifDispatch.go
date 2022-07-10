@@ -1,30 +1,28 @@
 package streamNotif
 
-import "time"
+import (
+	"sync"
+	"time"
+
+	"github.com/betalixt/gorr"
+)
 
 type NotificationDispatch struct {
-	observers map[string]INotificationObserver
+	eventQueue        chan TracedEvent
+	messageCount      int
+	messageCountMutex sync.Mutex
+	closing           bool
 }
 
-func (disp *NotificationDispatch) Subscribe(
-	key string,
-	obs INotificationObserver,
-) {
-	_, exists := disp.observers[key]
-	if !exists {
-		disp.observers[key] = obs
-
+func NewNotifDispatch() *NotificationDispatch {
+	return &NotificationDispatch{
+		eventQueue:    make(chan TracedEvent, 1000),
+		messageCount: 0,
+		closing:       false,
 	}
 }
 
-func (disp *NotificationDispatch) Unsubscribe(key string) {
-	obs := disp.observers[key]
-	if obs != nil {
-		obs.OnCompleted()
-		delete(disp.observers, key)
-	}
-}
-
+// - Event channel handling
 func (disp *NotificationDispatch) DispatchEventNotification(
 	eventId string,
 	stream string,
@@ -35,32 +33,79 @@ func (disp *NotificationDispatch) DispatchEventNotification(
 	createdDateTime time.Time,
 	traceparent string,
 	tracepart string,
-) {
-	for _, obs := range disp.observers {
-		obs.OnNext(
-			EventEntity{
-				Id:              eventId,
-				Stream:          stream,
-				StreamId:        streamId,
-				Event:           event,
-				StreamVersion:   version,
-				Data:            data,
-				CreatedDateTime: createdDateTime,
+) error {
+
+	if disp.closing {
+		return gorr.NewError(
+			gorr.ErrorCode{
+				Code:    12000,
+				Message: "DispatchChannelClosed",
 			},
-			traceparent,
-			tracepart,
+			500,
+			"",
 		)
 	}
+  disp.messageQueued()
+	disp.eventQueue <- TracedEvent{
+		Event: EventEntity{
+			Id:              eventId,
+			Stream:          stream,
+			StreamId:        streamId,
+			Event:           event,
+			StreamVersion:   version,
+			Data:            data,
+			CreatedDateTime: createdDateTime,
+		},
+		Traceparent: traceparent,
+		Tracepart:   tracepart,
+		Retries:     0,
+	}
+	return nil
 }
+
+func (disp *NotificationDispatch) retryEventNotification(
+	evnt TracedEvent,
+) {
+	evnt.Retries += 1
+	disp.eventQueue <- evnt
+}
+
+func (disp *NotificationDispatch) processQueue() {
+	active := true
+	var evnt TracedEvent
+	for active {
+		evnt, active = <-disp.eventQueue
+		disp.publishEvent(evnt)
+	}
+}
+
+// - RMQ publish handler
+func (disp *NotificationDispatch) publishEvent(evnt TracedEvent) {
+
+}
+
+// - Message tracking handler
+func (disp *NotificationDispatch) messageQueued(){
+	disp.messageCountMutex.Lock()
+	disp.messageCount += 1
+	disp.messageCountMutex.Unlock()
+}
+
+func (disp *NotificationDispatch) messageDispatched(){
+	disp.messageCountMutex.Lock()
+	disp.messageCount -= 1
+	disp.messageCountMutex.Unlock()
+}
+
+func (disp *NotificationDispatch) pendingMessages() int {
+	disp.messageCountMutex.Lock()
+	pending := disp.messageCount
+	disp.messageCountMutex.Unlock()
+	return pending
+}
+
+
 
 func (disp *NotificationDispatch) Close() {
-	for _, obs := range disp.observers {
-		obs.OnCompleted()
-	}
-}
-
-func NewNotifDispatch() *NotificationDispatch {
-	return &NotificationDispatch{
-		observers: make(map[string]INotificationObserver),
-	}
+	disp.closing = true
 }

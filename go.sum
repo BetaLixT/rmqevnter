@@ -1,4 +1,6 @@
 github.com/benbjohnson/clock v1.1.0/go.mod h1:J11/hYXuz8f4ySSvYwY0FKfm+ezbsZBKZxNJlLklBHA=
+github.com/betalixt/gorr v0.2.1 h1:pzP+PaW9R33d5haMl6eqsg9qaHuRbgRVQGODnDRRwEM=
+github.com/betalixt/gorr v0.2.1/go.mod h1:+W0Hh34ZHm3GpI/CLjOJjXhsiZouz+PoCe/Hy/BhymQ=
 github.com/davecgh/go-spew v1.1.0/go.mod h1:J7Y8YcW2NihsgmVo/mv3lAwl/skON4iLHjSsI+c5H38=
 github.com/davecgh/go-spew v1.1.1/go.mod h1:J7Y8YcW2NihsgmVo/mv3lAwl/skON4iLHjSsI+c5H38=
 github.com/kr/pretty v0.1.0/go.mod h1:dAy3ld7l9f0ibDNOQOHHMYYIIbhfbHSm3C4ZsoJORNo=
