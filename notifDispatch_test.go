@@ -83,7 +83,7 @@ func TestNotificationDispatch(t *testing.T) {
 	)
 
 	start := time.Now()
-	n := 10000
+	n := 1000000
 	for i := 0; i < n; i++ {
 		dis.DispatchEventNotification(
 			"test",

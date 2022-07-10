@@ -32,7 +32,7 @@ type NotificationDispatch struct {
 	closing bool
 	lgr     *zap.Logger
 	optn    *RabbitMQBatchPublisherOptions
-	wg      *sync.WaitGroup
+	wg      sync.WaitGroup
 }
 
 func NewNotifDispatch(
@@ -77,17 +77,44 @@ func NewNotifDispatch(
 	disp.rmqchan.NotifyPublish(disp.confirms)
 	
 	// - dispatching chan workers
-	go func() {
-		disp.wg.Add(1)
+	disp.wg.Add(2)
+	go func() {	
+		disp.confirmHandler()
 		disp.wg.Done()
 	}()
-	go func() {
-		disp.wg.Add(1)
+	go func() {	
 		disp.processQueue()
 		disp.wg.Done()
 	}()
 
 	return disp
+}
+
+func (disp *NotificationDispatch) Close() {
+	disp.closing = true
+	
+	disp.lgr.Info("closing publish observer...")
+	if disp.pendingMessages() != 0 {
+		disp.lgr.Info(
+			"waiting for pending messages",
+		)
+	}
+	prevCount := disp.pendingMessages()
+	sameCountRetr := 0
+	
+	for disp.pendingMessages() != 0 && sameCountRetr < 10 {
+		time.Sleep(100 * time.Millisecond)
+		curr := disp.pendingMessages()
+		if prevCount == curr {
+			sameCountRetr++
+		} else {
+			sameCountRetr = 0
+			prevCount = curr
+		}
+	}
+	close(disp.eventQueue)
+	disp.rmqchan.Close()
+	disp.wg.Wait()
 }
 
 // - Event channel handling
@@ -257,6 +284,4 @@ func (disp *NotificationDispatch) pendingMessages() int {
 	return pending
 }
 
-func (disp *NotificationDispatch) Close() {
-	disp.closing = true
-}
+
