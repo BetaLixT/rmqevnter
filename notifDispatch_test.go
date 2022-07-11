@@ -10,6 +10,26 @@ import (
 	"go.uber.org/zap"
 )
 
+type MockTracer struct {
+}
+
+var _ ITracer = (*MockTracer)(nil)
+
+func (_ *MockTracer) TraceDependencyCustom(
+	tid string,
+	rid string,
+	spanId string,
+	dependencyType string,
+	serviceName string,
+	commandName string,
+	success bool,
+	startTimestamp time.Time,
+	eventTimestamp time.Time,
+	fields map[string]string,
+) {
+
+}
+
 func TestNotificationDispatch(t *testing.T) {
 	conn, err := amqp091.Dial("amqp://guest:guest@localhost:5672/")
 	if err != nil {
@@ -72,7 +92,7 @@ func TestNotificationDispatch(t *testing.T) {
 		}
 	}()
 
-	dis := NewNotifDispatch(
+	disCore := NewNotifDispatch(
 		conn,
 		&RabbitMQBatchPublisherOptions{
 			ExchangeName: "notifications",
@@ -80,12 +100,22 @@ func TestNotificationDispatch(t *testing.T) {
 			ServiceName:  "test",
 		},
 		lgr,
+		&MockTracer{},
+	)
+	dis := NewNotificationDispatchTraceContext(
+		disCore,
+		"00",
+		"0000000000000000",
+		"00000000",
+		"00000000",
+		"00",
+		"0000",
 	)
 
 	start := time.Now()
-	n := 1000000
+	n := 10000
 	for i := 0; i < n; i++ {
-		dis.DispatchEventNotification(
+		dis.DispatchNotification(
 			"test",
 			"test",
 			"test",
@@ -93,15 +123,13 @@ func TestNotificationDispatch(t *testing.T) {
 			i,
 			nil,
 			time.Now(),
-			"test",
-			"test",
 		)
 		// if i%5 == 0 {
 		// 	time.Sleep(100 * time.Millisecond)
 		// }
 	}
 
-	dis.Close()
+	disCore.Close()
 	retr := 0
 	for recvCount != n && retr < 100 {
 		time.Sleep(500 * time.Millisecond)
