@@ -1,16 +1,18 @@
 package streamNotif
 
-type INotificationObserver interface {
-  OnNext(
-    evnt EventEntity,
-    traceparent string,
-    tracepartition string,
-  ) error
-  OnCompleted()
-}
+import "time"
 
-type IBatchPublisher interface {
-  PublishBatch([]TracedEvent) error
-  Open(retrych chan TracedEvent, trackch chan int) error
-  Close()
+type ITracer interface {
+	TraceDependencyCustom(
+		tid string,
+		rid string,
+		spanId string,
+		dependencyType string,
+		serviceName string,
+		commandName string,
+		success bool,
+		startTimestamp time.Time,
+		eventTimestamp time.Time,
+		fields map[string]string,
+	)
 }

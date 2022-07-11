@@ -16,9 +16,9 @@ type NotificationDispatch struct {
 	eventQueue chan TracedEvent
 
 	// Rabbit MQ
-	connection  *amqp.Connection
-	confirms    chan amqp.Confirmation
-	rmqchan     *amqp.Channel
+	connection *amqp.Connection
+	confirms   chan amqp.Confirmation
+	rmqchan    *amqp.Channel
 
 	// Message tracking
 	messageCount      int
@@ -26,19 +26,21 @@ type NotificationDispatch struct {
 
 	// ack pending
 	pendingMutex sync.Mutex
-	pendingsRaw map[uint64]TracedEvent
+	pendingsRaw  map[uint64]TracedEvent
 
 	// Common
 	closing bool
 	lgr     *zap.Logger
 	optn    *RabbitMQBatchPublisherOptions
 	wg      sync.WaitGroup
+	tracer  ITracer
 }
 
 func NewNotifDispatch(
 	conn *amqp.Connection,
 	optn *RabbitMQBatchPublisherOptions,
 	lgr *zap.Logger,
+	tracer ITracer,
 ) *NotificationDispatch {
 	disp := &NotificationDispatch{
 		eventQueue:   make(chan TracedEvent, 1000),
@@ -49,9 +51,10 @@ func NewNotifDispatch(
 		closing:      false,
 		lgr:          lgr,
 		optn:         optn,
+		tracer:       tracer,
 	}
 
-  // - setting up channel
+	// - setting up channel
 	chnl, err := disp.connection.Channel()
 	if err != nil {
 		panic(fmt.Errorf("error creating channel: %w", err))
@@ -75,14 +78,14 @@ func NewNotifDispatch(
 	}
 
 	disp.rmqchan.NotifyPublish(disp.confirms)
-	
+
 	// - dispatching chan workers
 	disp.wg.Add(2)
-	go func() {	
+	go func() {
 		disp.confirmHandler()
 		disp.wg.Done()
 	}()
-	go func() {	
+	go func() {
 		disp.processQueue()
 		disp.wg.Done()
 	}()
@@ -92,7 +95,7 @@ func NewNotifDispatch(
 
 func (disp *NotificationDispatch) Close() {
 	disp.closing = true
-	
+
 	disp.lgr.Info("closing publish observer...")
 	if disp.pendingMessages() != 0 {
 		disp.lgr.Info(
@@ -101,7 +104,7 @@ func (disp *NotificationDispatch) Close() {
 	}
 	prevCount := disp.pendingMessages()
 	sameCountRetr := 0
-	
+
 	for disp.pendingMessages() != 0 && sameCountRetr < 10 {
 		time.Sleep(100 * time.Millisecond)
 		curr := disp.pendingMessages()
@@ -126,7 +129,11 @@ func (disp *NotificationDispatch) DispatchEventNotification(
 	version int,
 	data interface{},
 	createdDateTime time.Time,
-	traceparent string,
+	ver string,
+	tid string,
+	pid string,
+	rid string,
+	flg string,
 	tracepart string,
 ) error {
 
@@ -151,9 +158,13 @@ func (disp *NotificationDispatch) DispatchEventNotification(
 			Data:            data,
 			CreatedDateTime: createdDateTime,
 		},
-		Traceparent: traceparent,
-		Tracepart:   tracepart,
-		Retries:     0,
+		Ver:     ver,
+		Tid:     tid,
+		Pid:     pid,
+		Rid:     rid,
+		Flg:     flg,
+		Tracepart: tracepart,
+		Retries: 0,
 	}
 	return nil
 }
@@ -176,6 +187,7 @@ func (disp *NotificationDispatch) processQueue() {
 
 // - RMQ publish handler
 func (disp *NotificationDispatch) publishEvent(evnt TracedEvent) error {
+	evnt.RequestStartTime = time.Now()
 	json, err := json.Marshal(evnt.Event)
 	if err != nil {
 		disp.lgr.Error("error marshalling message", zap.Error(err))
@@ -196,8 +208,14 @@ func (disp *NotificationDispatch) publishEvent(evnt TracedEvent) error {
 		amqp.Publishing{
 			ContentType: "application/json",
 			Body:        []byte(json),
-			Headers:     amqp.Table{
-				"traceparent": evnt.Traceparent,
+			Headers: amqp.Table{
+				"traceparent": fmt.Sprintf(
+					"%s-%s-%s-%s",
+					evnt.Ver,
+					evnt.Tid,
+					evnt.Pid,
+					evnt.Flg,
+				),
 			},
 		},
 	)
@@ -216,24 +234,51 @@ func (b *NotificationDispatch) confirmHandler() {
 		confirmed, open = <-b.confirms
 		if confirmed.DeliveryTag > 0 {
 			if confirmed.Ack {
-			  // TODO: error handling just incase
-				conf := b.getPending(confirmed.DeliveryTag)	
-				b.lgr.Info(
-					"confirmed notification delivery",
-					zap.String("trcprnt", conf.Traceparent),
-					zap.String("tpart", conf.Tracepart),
+				// TODO: error handling just incase
+				conf := b.getPending(confirmed.DeliveryTag)
+				b.tracer.TraceDependencyCustom(
+					conf.Tid,
+					conf.Rid,
+					"",
+					"RabbitMQ",
+					b.optn.ExchangeName,
+					"notify",
+					true,
+					conf.RequestStartTime,
+					time.Now(),
+					map[string]string{},
 				)
-				go func() {
-					b.messageDispatched()
-				}()
+				b.lgr.Debug(
+					"confirmed notification delivery",
+					zap.String("tid", conf.Tid),
+					zap.String("pid", conf.Pid),
+					zap.String("rid", conf.Rid),
+					zap.String("tpart", conf.Tracepart),
+				)	
+				b.messageDispatched()	
 			} else {
 				failed := b.getPending(confirmed.DeliveryTag)
+				b.tracer.TraceDependencyCustom(
+					failed.Tid,
+					failed.Rid,
+					"",
+					"RabbitMQ",
+					b.optn.ExchangeName,
+					"notify",
+					false,
+					failed.RequestStartTime,
+					time.Now(),
+					map[string]string{},
+				)
 				b.lgr.Warn(
 					"failed notification delivery",
 					zap.Int("retry", failed.Retries),
-					zap.String("trcprnt", failed.Traceparent),
+					zap.String("tid", failed.Tid),
+					zap.String("pid", failed.Pid),
+					zap.String("rid", failed.Rid),
 					zap.String("tpart", failed.Tracepart),
 				)
+				
 				// the channel may be filled
 				go func() {
 					b.retryEventNotification(failed)
@@ -245,22 +290,22 @@ func (b *NotificationDispatch) confirmHandler() {
 }
 
 // - Pending ack messages
-func (b *NotificationDispatch)getPending(key uint64) TracedEvent {
+func (b *NotificationDispatch) getPending(key uint64) TracedEvent {
 	b.pendingMutex.Lock()
 	v := b.pendingsRaw[key]
 	b.pendingMutex.Unlock()
 	return v
 }
 
-func (b *NotificationDispatch)setPending(key uint64, evnt TracedEvent) {
+func (b *NotificationDispatch) setPending(key uint64, evnt TracedEvent) {
 	b.pendingMutex.Lock()
-  b.pendingsRaw[key] = evnt
+	b.pendingsRaw[key] = evnt
 	b.pendingMutex.Unlock()
 }
 
-func (b *NotificationDispatch)delPending(key uint64) {
+func (b *NotificationDispatch) delPending(key uint64) {
 	b.pendingMutex.Lock()
-  delete(b.pendingsRaw, key)
+	delete(b.pendingsRaw, key)
 	b.pendingMutex.Unlock()
 }
 
@@ -283,5 +328,3 @@ func (disp *NotificationDispatch) pendingMessages() int {
 	disp.messageCountMutex.Unlock()
 	return pending
 }
-
-

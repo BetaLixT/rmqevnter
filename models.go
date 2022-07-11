@@ -14,8 +14,13 @@ type EventEntity struct {
 }
 
 type TracedEvent struct {
-	Event       EventEntity
-	Traceparent string
-	Tracepart   string
-	Retries     int
+	Event            EventEntity
+	Ver              string
+	Tid              string
+	Pid              string
+	Rid              string
+	Flg              string
+	Tracepart        string
+	RequestStartTime time.Time
+	Retries          int
 }
