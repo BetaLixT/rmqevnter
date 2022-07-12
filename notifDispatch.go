@@ -11,12 +11,16 @@ import (
 	"go.uber.org/zap"
 )
 
+const (
+	CONNECTION_KEY = "rmqevnter"
+)
+
 type NotificationDispatch struct {
 	// Event queue
 	eventQueue chan TracedEvent
 
 	// Rabbit MQ
-	connection *amqp.Connection
+	connection IRabbitMQConnection
 	confirms   chan amqp.Confirmation
 	rmqchan    *amqp.Channel
 
@@ -37,7 +41,7 @@ type NotificationDispatch struct {
 }
 
 func NewNotifDispatch(
-	conn *amqp.Connection,
+	conn IRabbitMQConnection,
 	optn *RabbitMQBatchPublisherOptions,
 	lgr *zap.Logger,
 	tracer ITracer,
@@ -55,7 +59,7 @@ func NewNotifDispatch(
 	}
 
 	// - setting up channel
-	chnl, err := disp.connection.Channel()
+	chnl, err := disp.connection.GetConnection(CONNECTION_KEY).Channel()
 	if err != nil {
 		panic(fmt.Errorf("error creating channel: %w", err))
 	}
@@ -91,6 +95,40 @@ func NewNotifDispatch(
 	}()
 
 	return disp
+}
+
+func (disp *NotificationDispatch) reconnect() error {
+	chnl, err := disp.connection.GetConnection(CONNECTION_KEY).Channel()
+	if err != nil {
+		return fmt.Errorf("error creating channel: %w", err)
+	}
+	disp.rmqchan = chnl
+	err = disp.rmqchan.ExchangeDeclare(
+		disp.optn.ExchangeName,
+		disp.optn.ExchangeType,
+		true,
+		false,
+		false,
+		false,
+		nil,
+	)
+	if err != nil {
+		return fmt.Errorf("error declaring exchange: %w", err)
+	}
+	err = disp.rmqchan.Confirm(false)
+	if err != nil {
+		return fmt.Errorf("error setting to confirm mode: %w", err)
+	}
+
+	disp.rmqchan.NotifyPublish(disp.confirms)
+
+	// - dispatching chan workers
+	disp.wg.Add(1)
+	go func() {
+		disp.confirmHandler()
+		disp.wg.Done()
+	}()
+	return nil
 }
 
 func (disp *NotificationDispatch) Close() {
@@ -187,43 +225,49 @@ func (disp *NotificationDispatch) processQueue() {
 
 // - RMQ publish handler
 func (disp *NotificationDispatch) publishEvent(evnt TracedEvent) error {
-	evnt.RequestStartTime = time.Now()
 	json, err := json.Marshal(evnt.Event)
 	if err != nil {
 		disp.lgr.Error("error marshalling message", zap.Error(err))
 		return fmt.Errorf("error unmarshalling: %w", err)
 	}
-	sqno := disp.rmqchan.GetNextPublishSeqNo()
-	// TODO implement tracepart
-	err = disp.rmqchan.Publish(
-		disp.optn.ExchangeName,
-		fmt.Sprintf(
-			"%s.%s.%s",
-			disp.optn.ServiceName,
-			evnt.Event.Stream,
-			evnt.Event.Event,
-		),
-		true,
-		false,
-		amqp.Publishing{
-			ContentType: "application/json",
-			Body:        []byte(json),
-			Headers: amqp.Table{
-				"traceparent": fmt.Sprintf(
-					"%s-%s-%s-%s",
-					evnt.Ver,
-					evnt.Tid,
-					evnt.Pid,
-					evnt.Flg,
-				),
+	
+	for {
+		sqno := disp.rmqchan.GetNextPublishSeqNo()
+		// TODO implement tracepart
+		evnt.RequestStartTime = time.Now()
+		err = disp.rmqchan.Publish(
+			disp.optn.ExchangeName,
+			fmt.Sprintf(
+				"%s.%s.%s",
+				disp.optn.ServiceName,
+				evnt.Event.Stream,
+				evnt.Event.Event,
+			),
+			true,
+			false,
+			amqp.Publishing{
+				ContentType: "application/json",
+				Body:        []byte(json),
+				Headers: amqp.Table{
+					"traceparent": fmt.Sprintf(
+						"%s-%s-%s-%s",
+						evnt.Ver,
+						evnt.Tid,
+						evnt.Pid,
+						evnt.Flg,
+					),
+				},
 			},
-		},
-	)
-	if err != nil {
-		disp.lgr.Error("Failed to publish message", zap.Error(err))
-		// TODO handle re connection
+		)
+		if err != nil {
+			disp.lgr.Error("Failed to publish message", zap.Error(err))
+			disp.reconnect()
+			continue
+			// TODO handle re connection
+		}
+		disp.setPending(sqno, evnt)
+		break;
 	}
-	disp.setPending(sqno, evnt)
 	return nil
 }
 

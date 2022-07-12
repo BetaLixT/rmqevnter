@@ -1,6 +1,9 @@
 package streamNotif
 
-import "time"
+import (
+	"time"
+	amqp "github.com/rabbitmq/amqp091-go"
+)
 
 type ITracer interface {
 	TraceDependencyCustom(
@@ -15,4 +18,8 @@ type ITracer interface {
 		eventTimestamp time.Time,
 		fields map[string]string,
 	)
+}
+
+type IRabbitMQConnection interface {
+	GetConnection(key string) *amqp.Connection
 }

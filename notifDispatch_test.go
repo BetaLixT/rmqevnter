@@ -30,13 +30,44 @@ func (_ *MockTracer) TraceDependencyCustom(
 
 }
 
-func TestNotificationDispatch(t *testing.T) {
+type RabbitMQMockConnection struct {
+	Connection *amqp091.Connection
+	CloseNotif chan *amqp091.Error
+}
+
+func (r *RabbitMQMockConnection) GetConnection(
+	key string,
+) *amqp091.Connection {
+	return r.Connection
+}
+
+func NewRabbitMQMockConnection(
+) *RabbitMQMockConnection {
 	conn, err := amqp091.Dial("amqp://guest:guest@localhost:5672/")
 	if err != nil {
-		fmt.Printf("error while creating rabbitmq connection : %v", err)
-		t.FailNow()
+		panic(err)
 	}
-	lch, err := conn.Channel()
+
+	n := RabbitMQMockConnection {
+		Connection: conn,
+		CloseNotif: make(chan *amqp091.Error, 1),
+	}
+	conn.NotifyClose(n.CloseNotif)
+	go func() {
+		active := true
+		var _ error
+		for active {
+			err, active = <- n.CloseNotif
+			// fmt.Printf(err.Error())
+			n.Connection, err = amqp091.Dial("amqp://guest:guest@localhost:5672/")
+		}
+	}()
+	return &n
+}
+
+func TestNotificationDispatch(t *testing.T) {
+	r := NewRabbitMQMockConnection()
+	lch, err := r.GetConnection("").Channel()
 	if err != nil {
 		fmt.Printf("error while creating rabbitmq channel : %v", err)
 		t.FailNow()
@@ -93,7 +124,7 @@ func TestNotificationDispatch(t *testing.T) {
 	}()
 
 	disCore := NewNotifDispatch(
-		conn,
+		r,
 		&RabbitMQBatchPublisherOptions{
 			ExchangeName: "notifications",
 			ExchangeType: "topic",
@@ -113,7 +144,7 @@ func TestNotificationDispatch(t *testing.T) {
 	)
 
 	start := time.Now()
-	n := 10000
+	n := 5
 	for i := 0; i < n; i++ {
 		dis.DispatchNotification(
 			"test",
