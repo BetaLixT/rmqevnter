@@ -21,8 +21,10 @@ type NotificationDispatch struct {
 
 	// Rabbit MQ
 	connection IRabbitMQConnection
-	confirms   chan amqp.Confirmation
+	cnfrmch    *chan amqp.Confirmation
+	clsntch    *chan *amqp.Error
 	rmqchan    *amqp.Channel
+	rmqchanMtx sync.Mutex
 
 	// Message tracking
 	messageCount      int
@@ -34,6 +36,7 @@ type NotificationDispatch struct {
 
 	// Common
 	closing bool
+	closed  bool
 	lgr     *zap.Logger
 	optn    *RabbitMQBatchPublisherOptions
 	wg      sync.WaitGroup
@@ -46,13 +49,17 @@ func NewNotifDispatch(
 	lgr *zap.Logger,
 	tracer ITracer,
 ) *NotificationDispatch {
+	confirms := make(chan amqp.Confirmation, 1)
+	closenotif := make(chan *amqp.Error)
 	disp := &NotificationDispatch{
 		eventQueue:   make(chan TracedEvent, 1000),
 		connection:   conn,
-		confirms:     make(chan amqp.Confirmation, 1),
+		cnfrmch:      &confirms,
+		clsntch:      &closenotif,
 		messageCount: 0,
 		pendingsRaw:  map[uint64]TracedEvent{},
 		closing:      false,
+		closed:       false,
 		lgr:          lgr,
 		optn:         optn,
 		tracer:       tracer,
@@ -81,12 +88,17 @@ func NewNotifDispatch(
 		panic(fmt.Errorf("error setting to confirm mode: %w", err))
 	}
 
-	disp.rmqchan.NotifyPublish(disp.confirms)
+	disp.rmqchan.NotifyPublish(*disp.cnfrmch)
+	disp.rmqchan.NotifyClose(*disp.clsntch)
 
 	// - dispatching chan workers
-	disp.wg.Add(2)
+	disp.wg.Add(3)
 	go func() {
-		disp.confirmHandler()
+		disp.confirmHandler(*disp.cnfrmch)
+		disp.wg.Done()
+	}()
+	go func() {
+		disp.closeHandler(*disp.clsntch)
 		disp.wg.Done()
 	}()
 	go func() {
@@ -98,36 +110,53 @@ func NewNotifDispatch(
 }
 
 func (disp *NotificationDispatch) reconnect() error {
-	chnl, err := disp.connection.GetConnection(CONNECTION_KEY).Channel()
-	if err != nil {
-		return fmt.Errorf("error creating channel: %w", err)
-	}
-	disp.rmqchan = chnl
-	err = disp.rmqchan.ExchangeDeclare(
-		disp.optn.ExchangeName,
-		disp.optn.ExchangeType,
-		true,
-		false,
-		false,
-		false,
-		nil,
-	)
-	if err != nil {
-		return fmt.Errorf("error declaring exchange: %w", err)
-	}
-	err = disp.rmqchan.Confirm(false)
-	if err != nil {
-		return fmt.Errorf("error setting to confirm mode: %w", err)
-	}
+	for true {
+		chnl, err := disp.connection.GetConnection(CONNECTION_KEY).Channel()
+		if err != nil {
+			disp.lgr.Warn("error creating channel", zap.Error(err))
+			time.Sleep(100 * time.Millisecond)
+			continue
+		}
+		disp.rmqchan = chnl
 
-	disp.rmqchan.NotifyPublish(disp.confirms)
+		confirms := make(chan amqp.Confirmation, 1)
+		closenotif := make(chan *amqp.Error)
+		// TODO review memory leak risk
+		disp.cnfrmch = &confirms
+		disp.clsntch = &closenotif
 
-	// - dispatching chan workers
-	disp.wg.Add(1)
-	go func() {
-		disp.confirmHandler()
-		disp.wg.Done()
-	}()
+		err = disp.rmqchan.ExchangeDeclare(
+			disp.optn.ExchangeName,
+			disp.optn.ExchangeType,
+			true,
+			false,
+			false,
+			false,
+			nil,
+		)
+		if err != nil {
+			disp.lgr.Error("error declaring exchange", zap.Error(err))
+		}
+		err = disp.rmqchan.Confirm(false)
+		if err != nil {
+			disp.lgr.Error("error setting to confirm mode", zap.Error(err))
+		}
+
+		disp.rmqchan.NotifyPublish(*disp.cnfrmch)
+		disp.rmqchan.NotifyClose(*disp.clsntch)
+
+		// - dispatching chan workers
+		disp.wg.Add(2)
+		go func() {
+			disp.confirmHandler(*disp.cnfrmch)
+			disp.wg.Done()
+		}()
+		go func() {
+			disp.closeHandler(*disp.clsntch)
+			disp.wg.Done()
+		}()
+		break
+	}
 	return nil
 }
 
@@ -154,6 +183,7 @@ func (disp *NotificationDispatch) Close() {
 		}
 	}
 	close(disp.eventQueue)
+	disp.closed = true
 	disp.rmqchan.Close()
 	disp.wg.Wait()
 }
@@ -196,13 +226,13 @@ func (disp *NotificationDispatch) DispatchEventNotification(
 			Data:            data,
 			CreatedDateTime: createdDateTime,
 		},
-		Ver:     ver,
-		Tid:     tid,
-		Pid:     pid,
-		Rid:     rid,
-		Flg:     flg,
+		Ver:       ver,
+		Tid:       tid,
+		Pid:       pid,
+		Rid:       rid,
+		Flg:       flg,
 		Tracepart: tracepart,
-		Retries: 0,
+		Retries:   0,
 	}
 	return nil
 }
@@ -230,52 +260,62 @@ func (disp *NotificationDispatch) publishEvent(evnt TracedEvent) error {
 		disp.lgr.Error("error marshalling message", zap.Error(err))
 		return fmt.Errorf("error unmarshalling: %w", err)
 	}
-	
-	for {
-		sqno := disp.rmqchan.GetNextPublishSeqNo()
-		// TODO implement tracepart
-		evnt.RequestStartTime = time.Now()
-		err = disp.rmqchan.Publish(
-			disp.optn.ExchangeName,
-			fmt.Sprintf(
-				"%s.%s.%s",
-				disp.optn.ServiceName,
-				evnt.Event.Stream,
-				evnt.Event.Event,
-			),
-			true,
-			false,
-			amqp.Publishing{
-				ContentType: "application/json",
-				Body:        []byte(json),
-				Headers: amqp.Table{
-					"traceparent": fmt.Sprintf(
-						"%s-%s-%s-%s",
-						evnt.Ver,
-						evnt.Tid,
-						evnt.Pid,
-						evnt.Flg,
-					),
-				},
+
+	disp.rmqchanMtx.Lock()
+	sqno := disp.rmqchan.GetNextPublishSeqNo()
+	// TODO implement tracepart
+	evnt.RequestStartTime = time.Now()
+	err = disp.rmqchan.Publish(
+		disp.optn.ExchangeName,
+		fmt.Sprintf(
+			"%s.%s.%s",
+			disp.optn.ServiceName,
+			evnt.Event.Stream,
+			evnt.Event.Event,
+		),
+		true,
+		false,
+		amqp.Publishing{
+			ContentType: "application/json",
+			Body:        []byte(json),
+			Headers: amqp.Table{
+				"traceparent": fmt.Sprintf(
+					"%s-%s-%s-%s",
+					evnt.Ver,
+					evnt.Tid,
+					evnt.Pid,
+					evnt.Flg,
+				),
 			},
-		)
-		if err != nil {
-			disp.lgr.Error("Failed to publish message", zap.Error(err))
-			disp.reconnect()
-			continue
-			// TODO handle re connection
-		}
+		},
+	)
+	if err != nil {
+		disp.lgr.Error("Failed to publish message", zap.Error(err))
+		disp.eventQueue <- evnt
+		// TODO handle re connection
+	} else {
 		disp.setPending(sqno, evnt)
-		break;
 	}
+	disp.rmqchanMtx.Unlock()
 	return nil
 }
 
-func (b *NotificationDispatch) confirmHandler() {
+func (dis *NotificationDispatch) closeHandler(closentf chan *amqp.Error) {
+	err, _ := <-closentf
+	if !dis.closed {
+		dis.rmqchanMtx.Lock()
+		dis.lgr.Warn("rabbit mq channel has been disconnected", zap.Error(err))
+		// reconnect
+		dis.reconnect()
+		dis.rmqchanMtx.Unlock()
+	}
+}
+
+func (b *NotificationDispatch) confirmHandler(confirms chan amqp.Confirmation) {
 	open := true
 	var confirmed amqp.Confirmation
 	for open {
-		confirmed, open = <-b.confirms
+		confirmed, open = <-confirms
 		if confirmed.DeliveryTag > 0 {
 			if confirmed.Ack {
 				// TODO: error handling just incase
@@ -298,8 +338,8 @@ func (b *NotificationDispatch) confirmHandler() {
 					zap.String("pid", conf.Pid),
 					zap.String("rid", conf.Rid),
 					zap.String("tpart", conf.Tracepart),
-				)	
-				b.messageDispatched()	
+				)
+				b.messageDispatched()
 			} else {
 				failed := b.getPending(confirmed.DeliveryTag)
 				b.tracer.TraceDependencyCustom(
@@ -322,7 +362,7 @@ func (b *NotificationDispatch) confirmHandler() {
 					zap.String("rid", failed.Rid),
 					zap.String("tpart", failed.Tracepart),
 				)
-				
+
 				// the channel may be filled
 				go func() {
 					b.retryEventNotification(failed)
@@ -331,6 +371,7 @@ func (b *NotificationDispatch) confirmHandler() {
 			b.delPending(confirmed.DeliveryTag)
 		}
 	}
+	b.lgr.Debug("confirms channel has closed")
 }
 
 // - Pending ack messages

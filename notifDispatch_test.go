@@ -58,6 +58,7 @@ func NewRabbitMQMockConnection(
 		var _ error
 		for active {
 			err, active = <- n.CloseNotif
+			fmt.Printf("recconnecting ")
 			// fmt.Printf(err.Error())
 			n.Connection, err = amqp091.Dial("amqp://guest:guest@localhost:5672/")
 		}
