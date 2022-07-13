@@ -1,11 +1,12 @@
-package streamNotif
+package main
 
 import (
 	"fmt"
 	"log"
-	"testing"
+	"sync"
 	"time"
 
+	"github.com/BetaLixT/rmqevnter"
 	"github.com/rabbitmq/amqp091-go"
 	"go.uber.org/zap"
 )
@@ -13,7 +14,7 @@ import (
 type MockTracer struct {
 }
 
-var _ ITracer = (*MockTracer)(nil)
+var _ streamNotif.ITracer = (*MockTracer)(nil)
 
 func (_ *MockTracer) TraceDependencyCustom(
 	tid string,
@@ -33,12 +34,16 @@ func (_ *MockTracer) TraceDependencyCustom(
 type RabbitMQMockConnection struct {
 	Connection *amqp091.Connection
 	CloseNotif chan *amqp091.Error
+	mtx sync.Mutex
 }
 
 func (r *RabbitMQMockConnection) GetConnection(
 	key string,
 ) *amqp091.Connection {
-	return r.Connection
+	r.mtx.Lock()
+	x := r.Connection
+	r.mtx.Unlock()
+	return x
 }
 
 func NewRabbitMQMockConnection(
@@ -60,6 +65,7 @@ func NewRabbitMQMockConnection(
 			err, active = <- n.CloseNotif
 			
 			// fmt.Printf(err.Error())
+			n.mtx.Lock()
 			for true {
 				n.Connection, err = amqp091.Dial("amqp://guest:guest@localhost:5672/")
 				if err != nil {
@@ -70,18 +76,19 @@ func NewRabbitMQMockConnection(
 				}
 				break
 			}
+			n.mtx.Unlock()
 			
 		}
 	}()
 	return &n
 }
 
-func TestNotificationDispatch(t *testing.T) {
+func TestNotificationDispatch() error {
 	r := NewRabbitMQMockConnection()
 	lch, err := r.GetConnection("").Channel()
 	if err != nil {
 		fmt.Printf("error while creating rabbitmq channel : %v", err)
-		t.FailNow()
+		return err
 	}
 	lch.ExchangeDeclare(
 		"notifications",
@@ -109,7 +116,7 @@ func TestNotificationDispatch(t *testing.T) {
 	)
 	if err != nil {
 		fmt.Printf("error while creating rabbitmq queue: %v", err)
-		t.FailNow()
+		return err
 	}
 	msgs, err := lch.Consume(
 		q.Name,
@@ -124,7 +131,7 @@ func TestNotificationDispatch(t *testing.T) {
 	lgr, err := zap.NewProduction()
 	if err != nil {
 		fmt.Printf("error while creating rabbitmq connection : %v", err)
-		t.FailNow()
+		return err
 	}
 	recvCount := 0
 	go func() {
@@ -134,9 +141,9 @@ func TestNotificationDispatch(t *testing.T) {
 		}
 	}()
 
-	disCore := NewNotifDispatch(
+	disCore := streamNotif.NewNotifDispatch(
 		r,
-		&RabbitMQBatchPublisherOptions{
+		&streamNotif.RabbitMQBatchPublisherOptions{
 			ExchangeName: "notifications",
 			ExchangeType: "topic",
 			ServiceName:  "test",
@@ -144,7 +151,7 @@ func TestNotificationDispatch(t *testing.T) {
 		lgr,
 		&MockTracer{},
 	)
-	dis := NewNotificationDispatchTraceContext(
+	dis := streamNotif.NewNotificationDispatchTraceContext(
 		disCore,
 		"00",
 		"0000000000000000",
@@ -180,6 +187,18 @@ func TestNotificationDispatch(t *testing.T) {
 	fmt.Printf("Completed in %f", time.Now().Sub(start).Seconds())
 	if recvCount != n {
 		fmt.Printf("only %d messages were recieved out of %d", recvCount, n)
-		t.FailNow()
+		return err
 	}
+	return nil
 }
+
+
+func main() {
+	err := TestNotificationDispatch()
+	if err != nil {
+		fmt.Printf(err.Error())
+	}
+	
+}
+
+

@@ -114,7 +114,7 @@ func (disp *NotificationDispatch) reconnect() error {
 		chnl, err := disp.connection.GetConnection(CONNECTION_KEY).Channel()
 		if err != nil {
 			disp.lgr.Warn("error creating channel", zap.Error(err))
-			time.Sleep(100 * time.Millisecond)
+			time.Sleep(500 * time.Millisecond)
 			continue
 		}
 		disp.rmqchan = chnl
