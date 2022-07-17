@@ -128,7 +128,7 @@ func TestNotificationDispatch() error {
 		nil,
 	)
 
-	lgr, err := zap.NewProduction()
+	lgr, err := zap.NewDevelopment()
 	if err != nil {
 		fmt.Printf("error while creating rabbitmq connection : %v", err)
 		return err

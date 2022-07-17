@@ -3,6 +3,8 @@ module github.com/BetaLixT/rmqevnter
 go 1.18
 
 require (
+	github.com/BetaLixT/go-resiliency v1.2.1 // indirect
+	github.com/BetaLixT/usago v0.1.4 // indirect
 	github.com/betalixt/gorr v0.2.1 // indirect
 	github.com/rabbitmq/amqp091-go v1.3.4 // indirect
 	github.com/streadway/amqp v1.0.0 // indirect

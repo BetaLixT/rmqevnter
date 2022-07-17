@@ -1,3 +1,11 @@
+github.com/BetaLixT/go-resiliency v1.2.1 h1:Ba6K6f1DSZ2zcsxM85LJHHv95SPM7IvNnIMSk1KT/BY=
+github.com/BetaLixT/go-resiliency v1.2.1/go.mod h1:D+qnxM3Z0dPZw52f1Tlsq9GVbxV9YpttM+JPYsh3zJU=
+github.com/BetaLixT/usago v0.1.2 h1:LXGNa1U5oiJNDPJaFFlJBX/RrN1lCevaTFxXQn1u9Jk=
+github.com/BetaLixT/usago v0.1.2/go.mod h1:EoPtZlOph/evMCDwV1IcJ0UNw6L1DwtUa8ZEcmipx7Q=
+github.com/BetaLixT/usago v0.1.3 h1:oeCxwEJHeth9ewETJtfAGVLHhj4Ag3jqQh9iAeSerqo=
+github.com/BetaLixT/usago v0.1.3/go.mod h1:EoPtZlOph/evMCDwV1IcJ0UNw6L1DwtUa8ZEcmipx7Q=
+github.com/BetaLixT/usago v0.1.4 h1:kE9+/swDWvPRt8LebhQ2O08fNkPNELrzB0O//WOTc8Y=
+github.com/BetaLixT/usago v0.1.4/go.mod h1:EoPtZlOph/evMCDwV1IcJ0UNw6L1DwtUa8ZEcmipx7Q=
 github.com/benbjohnson/clock v1.1.0/go.mod h1:J11/hYXuz8f4ySSvYwY0FKfm+ezbsZBKZxNJlLklBHA=
 github.com/betalixt/gorr v0.2.1 h1:pzP+PaW9R33d5haMl6eqsg9qaHuRbgRVQGODnDRRwEM=
 github.com/betalixt/gorr v0.2.1/go.mod h1:+W0Hh34ZHm3GpI/CLjOJjXhsiZouz+PoCe/Hy/BhymQ=
