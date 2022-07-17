@@ -6,7 +6,7 @@ import (
 	"testing"
 	"time"
 
-	"github.com/rabbitmq/amqp091-go"
+	"github.com/BetaLixT/usago"
 	"go.uber.org/zap"
 )
 
@@ -30,60 +30,17 @@ func (_ *MockTracer) TraceDependencyCustom(
 
 }
 
-type RabbitMQMockConnection struct {
-	Connection *amqp091.Connection
-	CloseNotif chan *amqp091.Error
-}
-
-func (r *RabbitMQMockConnection) GetConnection(
-	key string,
-) *amqp091.Connection {
-	return r.Connection
-}
-
-func NewRabbitMQMockConnection(
-) *RabbitMQMockConnection {
-	conn, err := amqp091.Dial("amqp://guest:guest@localhost:5672/")
-	if err != nil {
-		panic(err)
-	}
-
-	n := RabbitMQMockConnection {
-		Connection: conn,
-		CloseNotif: make(chan *amqp091.Error, 1),
-	}
-	conn.NotifyClose(n.CloseNotif)
-	go func() {
-		active := true
-		var _ error
-		for active {
-			err, active = <- n.CloseNotif
-			
-			// fmt.Printf(err.Error())
-			for true {
-				n.Connection, err = amqp091.Dial("amqp://guest:guest@localhost:5672/")
-				if err != nil {
-					fmt.Printf("recconnecting ")
-					fmt.Printf("connection failed")
-					time.Sleep(100 * time.Millisecond)
-					continue
-				}
-				break
-			}
-			
-		}
-	}()
-	return &n
-}
-
 func TestNotificationDispatch(t *testing.T) {
-	r := NewRabbitMQMockConnection()
-	lch, err := r.GetConnection("").Channel()
+	lgr, err := zap.NewProduction()
+	manager := usago.NewChannelManager(
+		"amqp://guest:guest@localhost:5672/",
+		lgr,
+	)
 	if err != nil {
 		fmt.Printf("error while creating rabbitmq channel : %v", err)
 		t.FailNow()
 	}
-	lch.ExchangeDeclare(
+	cnsmBldr := usago.NewChannelBuilder().WithExchange(
 		"notifications",
 		"topic",
 		true,
@@ -91,51 +48,52 @@ func TestNotificationDispatch(t *testing.T) {
 		false,
 		false,
 		nil,
-	)
-	q, err := lch.QueueDeclare(
-		"",
+	).WithQueue(
+		"temporary01",
 		false,
 		false,
 		true,
 		false,
 		nil,
-	)
-	err = lch.QueueBind(
-		q.Name,
+	).WithQueueBinding(
+		"temporary01",
 		"#",
 		"notifications",
 		false,
 		nil,
 	)
+	
+	cnsmCtx, err := manager.NewChannel(*cnsmBldr)
 	if err != nil {
 		fmt.Printf("error while creating rabbitmq queue: %v", err)
 		t.FailNow()
 	}
-	msgs, err := lch.Consume(
-		q.Name,
+
+	cnsmChan, err := cnsmCtx.RegisterConsumer(
+		"temporary01",
 		"",
 		true,
 		false,
 		false,
 		false,
 		nil,
-	)
-
-	lgr, err := zap.NewProduction()
+	)	
 	if err != nil {
-		fmt.Printf("error while creating rabbitmq connection : %v", err)
+		fmt.Printf("error while registering consumer : %v", err)
 		t.FailNow()
 	}
 	recvCount := 0
 	go func() {
-		for range msgs {
+		active := true
+		for active {
+			_, active = <- cnsmChan
 			log.Printf("recv: %d", recvCount)
 			recvCount++
-		}
+		}	
 	}()
 
 	disCore := NewNotifDispatch(
-		r,
+		manager,
 		&RabbitMQBatchPublisherOptions{
 			ExchangeName: "notifications",
 			ExchangeType: "topic",
@@ -155,7 +113,7 @@ func TestNotificationDispatch(t *testing.T) {
 	)
 
 	start := time.Now()
-	n := 5
+	n := 1000000
 	for i := 0; i < n; i++ {
 		dis.DispatchNotification(
 			"test",
@@ -166,7 +124,7 @@ func TestNotificationDispatch(t *testing.T) {
 			nil,
 			time.Now(),
 		)
-		time.Sleep(5 * time.Second)
+		// time.Sleep(5 * time.Second)
 		// if i%5 == 0 {
 		// 	time.Sleep(100 * time.Millisecond)
 		// }

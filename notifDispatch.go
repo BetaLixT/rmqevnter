@@ -24,7 +24,6 @@ type NotificationDispatch struct {
 	chnlManager *usago.ChannelManager
 	channelCtx  *usago.ChannelContext
 	cnfrmch     *chan amqp.Confirmation
-	rmqchanMtx  sync.Mutex
 
 	// Message tracking
 	messageCount      int
@@ -195,7 +194,9 @@ func (disp *NotificationDispatch) processQueue() {
 	var evnt TracedEvent
 	for active {
 		evnt, active = <-disp.eventQueue
-		disp.publishEvent(evnt)
+		if active {
+			disp.publishEvent(evnt)
+		}
 	}
 }
 
@@ -239,7 +240,6 @@ func (disp *NotificationDispatch) publishEvent(evnt TracedEvent) error {
 	} else {
 		disp.setPending(sqno, evnt)
 	}
-	disp.rmqchanMtx.Unlock()
 	return nil
 }
 
