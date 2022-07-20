@@ -1,4 +1,4 @@
-package streamNotif
+package rmqevnter
 
 import (
 	"fmt"
@@ -62,7 +62,7 @@ func TestNotificationDispatch(t *testing.T) {
 		false,
 		nil,
 	)
-	
+
 	cnsmCtx, err := manager.NewChannel(*cnsmBldr)
 	if err != nil {
 		fmt.Printf("error while creating rabbitmq queue: %v", err)
@@ -77,7 +77,7 @@ func TestNotificationDispatch(t *testing.T) {
 		false,
 		false,
 		nil,
-	)	
+	)
 	if err != nil {
 		fmt.Printf("error while registering consumer : %v", err)
 		t.FailNow()
@@ -86,10 +86,10 @@ func TestNotificationDispatch(t *testing.T) {
 	go func() {
 		active := true
 		for active {
-			_, active = <- cnsmChan
+			_, active = <-cnsmChan
 			log.Printf("recv: %d", recvCount)
 			recvCount++
-		}	
+		}
 	}()
 
 	disCore := NewNotifDispatch(

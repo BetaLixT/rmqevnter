@@ -1,4 +1,4 @@
-package streamNotif
+package rmqevnter
 
 import "time"
 

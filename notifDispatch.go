@@ -1,4 +1,4 @@
-package streamNotif
+package rmqevnter
 
 import (
 	"encoding/json"
@@ -51,7 +51,7 @@ func NewNotifDispatch(
 
 	disp := &NotificationDispatch{
 		eventQueue:   make(chan TracedEvent, 1000),
-		chnlManager:   chnlManager,
+		chnlManager:  chnlManager,
 		messageCount: 0,
 		pendingsRaw:  map[uint64]TracedEvent{},
 		closing:      false,
@@ -72,7 +72,7 @@ func NewNotifDispatch(
 		nil,
 	).WithConfirms(true)
 
-	channelCtx, err :=  chnlManager.NewChannel(*chnlBuilder)
+	channelCtx, err := chnlManager.NewChannel(*chnlBuilder)
 	if err != nil {
 		lgr.Error(
 			"failed to build channel",

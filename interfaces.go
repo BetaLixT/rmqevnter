@@ -1,7 +1,8 @@
-package streamNotif
+package rmqevnter
 
 import (
 	"time"
+
 	amqp "github.com/rabbitmq/amqp091-go"
 )
 

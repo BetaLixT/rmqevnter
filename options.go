@@ -1,4 +1,4 @@
-package streamNotif
+package rmqevnter
 
 type RabbitMQBatchPublisherOptions struct {
 	ExchangeName string
