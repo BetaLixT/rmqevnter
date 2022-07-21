@@ -264,7 +264,7 @@ func (b *NotificationDispatch) confirmHandler(confirms chan amqp.Confirmation) {
 					time.Now(),
 					map[string]string{},
 				)
-				b.lgr.Debug(
+				b.lgr.Info(
 					"confirmed notification delivery",
 					zap.String("tid", conf.Tid),
 					zap.String("pid", conf.Pid),
