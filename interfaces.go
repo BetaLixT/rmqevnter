@@ -2,10 +2,15 @@ package rmqevnter
 
 import (
 	"time"
+
+	"golang.org/x/net/context"
 )
 
 type ITracer interface {
-	TraceDependencyCustom(
+	ExtractTraceInfo(
+		ctx context.Context,
+	) (ver, tid, pid, rid, flg string)
+	TraceDependencyWithIds(
 		tid string,
 		rid string,
 		spanId string,

@@ -1,6 +1,7 @@
 package rmqevnter
 
 import (
+	"context"
 	"encoding/json"
 	"fmt"
 	"sync"
@@ -135,6 +136,7 @@ func (disp *NotificationDispatch) Close() {
 
 // - Event channel handling
 func (disp *NotificationDispatch) DispatchEventNotification(
+	ctx context.Context,
 	eventId string,
 	stream string,
 	streamId string,
@@ -142,12 +144,6 @@ func (disp *NotificationDispatch) DispatchEventNotification(
 	version int,
 	data interface{},
 	createdDateTime time.Time,
-	ver string,
-	tid string,
-	pid string,
-	rid string,
-	flg string,
-	tracepart string,
 ) error {
 
 	if disp.closing {
@@ -160,6 +156,7 @@ func (disp *NotificationDispatch) DispatchEventNotification(
 			"",
 		)
 	}
+	ver, tid, pid, rid, flg := disp.tracer.ExtractTraceInfo(ctx)
 	disp.messageQueued()
 	disp.eventQueue <- TracedEvent{
 		Event: EventEntity{
@@ -176,7 +173,7 @@ func (disp *NotificationDispatch) DispatchEventNotification(
 		Pid:       pid,
 		Rid:       rid,
 		Flg:       flg,
-		Tracepart: tracepart,
+		Tracepart: "000",
 		Retries:   0,
 	}
 	return nil
@@ -252,7 +249,7 @@ func (b *NotificationDispatch) confirmHandler(confirms chan amqp.Confirmation) {
 			if confirmed.Ack {
 				// TODO: error handling just incase
 				conf := b.getPending(confirmed.DeliveryTag)
-				b.tracer.TraceDependencyCustom(
+				b.tracer.TraceDependencyWithIds(
 					conf.Tid,
 					conf.Rid,
 					"",
@@ -275,7 +272,7 @@ func (b *NotificationDispatch) confirmHandler(confirms chan amqp.Confirmation) {
 				b.messageDispatched()
 			} else {
 				failed := b.getPending(confirmed.DeliveryTag)
-				b.tracer.TraceDependencyCustom(
+				b.tracer.TraceDependencyWithIds(
 					failed.Tid,
 					failed.Rid,
 					"",
