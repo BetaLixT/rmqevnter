@@ -161,6 +161,53 @@ func (disp *NotificationDispatch) DispatchEventNotification(
 	disp.eventQueue <- TracedEvent{
 		Event: EventEntity{
 			Id:              eventId,
+			ServiceName:     disp.optn.ServiceName,
+			Stream:          stream,
+			StreamId:        streamId,
+			Event:           event,
+			StreamVersion:   version,
+			Data:            data,
+			CreatedDateTime: createdDateTime,
+		},
+		Ver:       ver,
+		Tid:       tid,
+		Pid:       pid,
+		Rid:       rid,
+		Flg:       flg,
+		Tracepart: "000",
+		Retries:   0,
+	}
+	return nil
+}
+
+func (disp *NotificationDispatch) DispatchEventNotificationWithServiceName(
+	ctx context.Context,
+	eventId string,
+	svcName string,
+	stream string,
+	streamId string,
+	event string,
+	version int,
+	data interface{},
+	createdDateTime time.Time,
+) error {
+
+	if disp.closing {
+		return gorr.NewError(
+			gorr.ErrorCode{
+				Code:    12000,
+				Message: "DispatchChannelClosed",
+			},
+			500,
+			"",
+		)
+	}
+	ver, tid, pid, rid, flg := disp.tracer.ExtractTraceInfo(ctx)
+	disp.messageQueued()
+	disp.eventQueue <- TracedEvent{
+		Event: EventEntity{
+			Id:              eventId,
+			ServiceName:     svcName,
 			Stream:          stream,
 			StreamId:        streamId,
 			Event:           event,
@@ -211,7 +258,7 @@ func (disp *NotificationDispatch) publishEvent(evnt TracedEvent) error {
 		disp.optn.ExchangeName,
 		fmt.Sprintf(
 			"%s.%s.%s",
-			disp.optn.ServiceName,
+			evnt.Event.ServiceName,
 			evnt.Event.Stream,
 			evnt.Event.Event,
 		),
