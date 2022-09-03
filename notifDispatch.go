@@ -156,7 +156,14 @@ func (disp *NotificationDispatch) DispatchEventNotification(
 			"",
 		)
 	}
-	ver, tid, pid, rid, flg := disp.tracer.ExtractTraceInfo(ctx)
+	ver := fmt.Sprintf("%d", version)
+	tid := ""
+	pid := ""
+	rid := ""
+	flg := ""
+	if disp.tracer != nil {
+		ver, tid, pid, rid, flg = disp.tracer.ExtractTraceInfo(ctx)
+	}
 	disp.messageQueued()
 	disp.eventQueue <- TracedEvent{
 		Event: EventEntity{
@@ -202,7 +209,14 @@ func (disp *NotificationDispatch) DispatchEventNotificationWithServiceName(
 			"",
 		)
 	}
-	ver, tid, pid, rid, flg := disp.tracer.ExtractTraceInfo(ctx)
+	ver := fmt.Sprintf("%d", version)
+	tid := ""
+	pid := ""
+	rid := ""
+	flg := ""
+	if disp.tracer != nil {
+		ver, tid, pid, rid, flg = disp.tracer.ExtractTraceInfo(ctx)
+	}
 	disp.messageQueued()
 	disp.eventQueue <- TracedEvent{
 		Event: EventEntity{
@@ -296,18 +310,20 @@ func (b *NotificationDispatch) confirmHandler(confirms chan amqp.Confirmation) {
 			if confirmed.Ack {
 				// TODO: error handling just incase
 				conf := b.getPending(confirmed.DeliveryTag)
-				b.tracer.TraceDependencyWithIds(
-					conf.Tid,
-					conf.Rid,
-					"",
-					"RabbitMQ",
-					b.optn.ExchangeName,
-					"notify",
-					true,
-					conf.RequestStartTime,
-					time.Now(),
-					map[string]string{},
-				)
+				if b.tracer != nil {
+					b.tracer.TraceDependencyWithIds(
+						conf.Tid,
+						conf.Rid,
+						"",
+						"RabbitMQ",
+						b.optn.ExchangeName,
+						"notify",
+						true,
+						conf.RequestStartTime,
+						time.Now(),
+						map[string]string{},
+					)
+				}
 				b.lgr.Info(
 					"confirmed notification delivery",
 					zap.String("tid", conf.Tid),
