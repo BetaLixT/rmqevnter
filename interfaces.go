@@ -1,9 +1,8 @@
 package rmqevnter
 
 import (
+	"context"
 	"time"
-
-	"golang.org/x/net/context"
 )
 
 type ITracer interface {
