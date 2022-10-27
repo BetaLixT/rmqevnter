@@ -161,8 +161,12 @@ func (disp *NotificationDispatch) DispatchEventNotification(
 	pid := ""
 	rid := ""
 	flg := ""
+	sid := ""
 	if disp.tracer != nil {
 		ver, tid, pid, rid, flg = disp.tracer.ExtractTraceInfo(ctx)
+	}
+	if tm, err := GenerateRadomHexString(8); err != nil {
+		sid = tm
 	}
 	disp.messageQueued()
 	disp.eventQueue <- TracedEvent{
@@ -180,6 +184,7 @@ func (disp *NotificationDispatch) DispatchEventNotification(
 		Tid:       tid,
 		Pid:       pid,
 		Rid:       rid,
+		Sid:       sid,
 		Flg:       flg,
 		Tracepart: "000",
 		Retries:   0,
@@ -214,8 +219,12 @@ func (disp *NotificationDispatch) DispatchEventNotificationWithServiceName(
 	pid := ""
 	rid := ""
 	flg := ""
+	sid := ""
 	if disp.tracer != nil {
 		ver, tid, pid, rid, flg = disp.tracer.ExtractTraceInfo(ctx)
+	}
+	if tm, err := GenerateRadomHexString(8); err == nil {
+		sid = tm
 	}
 	disp.messageQueued()
 	disp.eventQueue <- TracedEvent{
@@ -234,6 +243,7 @@ func (disp *NotificationDispatch) DispatchEventNotificationWithServiceName(
 		Pid:       pid,
 		Rid:       rid,
 		Flg:       flg,
+		Sid:       sid,
 		Tracepart: "000",
 		Retries:   0,
 	}
@@ -286,7 +296,7 @@ func (disp *NotificationDispatch) publishEvent(evnt TracedEvent) error {
 					"%s-%s-%s-%s",
 					evnt.Ver,
 					evnt.Tid,
-					evnt.Pid,
+					evnt.Sid,
 					evnt.Flg,
 				),
 			},
@@ -314,7 +324,7 @@ func (b *NotificationDispatch) confirmHandler(confirms chan amqp.Confirmation) {
 					b.tracer.TraceDependencyWithIds(
 						conf.Tid,
 						conf.Rid,
-						"",
+						conf.Sid,
 						"RabbitMQ",
 						b.optn.ExchangeName,
 						"notify",
@@ -329,6 +339,7 @@ func (b *NotificationDispatch) confirmHandler(confirms chan amqp.Confirmation) {
 					zap.String("tid", conf.Tid),
 					zap.String("pid", conf.Pid),
 					zap.String("rid", conf.Rid),
+					zap.String("sid", conf.Sid),
 					zap.String("tpart", conf.Tracepart),
 					zap.Int("stver", conf.Event.StreamVersion),
 				)
@@ -338,7 +349,7 @@ func (b *NotificationDispatch) confirmHandler(confirms chan amqp.Confirmation) {
 				b.tracer.TraceDependencyWithIds(
 					failed.Tid,
 					failed.Rid,
-					"",
+					failed.Sid,
 					"RabbitMQ",
 					b.optn.ExchangeName,
 					"notify",
@@ -353,6 +364,7 @@ func (b *NotificationDispatch) confirmHandler(confirms chan amqp.Confirmation) {
 					zap.String("tid", failed.Tid),
 					zap.String("pid", failed.Pid),
 					zap.String("rid", failed.Rid),
+					zap.String("sid", failed.Sid),
 					zap.String("tpart", failed.Tracepart),
 				)
 

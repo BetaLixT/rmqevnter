@@ -19,6 +19,7 @@ type TracedEvent struct {
 	Tid              string
 	Pid              string
 	Rid              string
+	Sid              string
 	Flg              string
 	Tracepart        string
 	RequestStartTime time.Time
