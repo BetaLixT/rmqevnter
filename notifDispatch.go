@@ -165,7 +165,7 @@ func (disp *NotificationDispatch) DispatchEventNotification(
 	if disp.tracer != nil {
 		ver, tid, pid, rid, flg = disp.tracer.ExtractTraceInfo(ctx)
 	}
-	if tm, err := GenerateRadomHexString(8); err != nil {
+	if tm, err := GenerateRadomHexString(8); err == nil {
 		sid = tm
 	}
 	disp.messageQueued()
